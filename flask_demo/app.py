@@ -22,11 +22,13 @@ from context import webauthn
 from models import User
 
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///{}'.format(
-    os.path.join(os.path.dirname(os.path.abspath(__name__)), 'webauthn.db'))
+app.config[
+    'SQLALCHEMY_DATABASE_URI'
+] = f"sqlite:///{os.path.join(os.path.dirname(os.path.abspath(__name__)), 'webauthn.db')}"
+
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 sk = os.environ.get('FLASK_SECRET_KEY')
-app.secret_key = sk if sk else os.urandom(40)
+app.secret_key = sk or os.urandom(40)
 db.init_app(app)
 login_manager = LoginManager()
 login_manager.init_app(app)
@@ -156,45 +158,36 @@ def verify_credential_info():
     try:
         webauthn_credential = webauthn_registration_response.verify()
     except Exception as e:
-        return jsonify({'fail': 'Registration failed. Error: {}'.format(e)})
+        return jsonify({'fail': f'Registration failed. Error: {e}'})
 
-    # Step 17.
-    #
-    # Check that the credentialId is not yet registered to any other user.
-    # If registration is requested for a credential that is already registered
-    # to a different user, the Relying Party SHOULD fail this registration
-    # ceremony, or it MAY decide to accept the registration, e.g. while deleting
-    # the older registration.
-    credential_id_exists = User.query.filter_by(
-        credential_id=webauthn_credential.credential_id).first()
-    if credential_id_exists:
+    if credential_id_exists := User.query.filter_by(
+        credential_id=webauthn_credential.credential_id
+    ).first():
         return make_response(
             jsonify({
                 'fail': 'Credential ID already exists.'
             }), 401)
 
-    existing_user = User.query.filter_by(username=username).first()
-    if not existing_user:
-        if sys.version_info >= (3, 0):
-            webauthn_credential.credential_id = str(
-                webauthn_credential.credential_id, "utf-8")
-            webauthn_credential.public_key = str(
-                webauthn_credential.public_key, "utf-8")
-        user = User(
-            ukey=ukey,
-            username=username,
-            display_name=display_name,
-            pub_key=webauthn_credential.public_key,
-            credential_id=webauthn_credential.credential_id,
-            sign_count=webauthn_credential.sign_count,
-            rp_id=RP_ID,
-            icon_url='https://example.com')
-        db.session.add(user)
-        db.session.commit()
-    else:
+    if existing_user := User.query.filter_by(username=username).first():
         return make_response(jsonify({'fail': 'User already exists.'}), 401)
 
-    flash('Successfully registered as {}.'.format(username))
+    if sys.version_info >= (3, 0):
+        webauthn_credential.credential_id = str(
+            webauthn_credential.credential_id, "utf-8")
+        webauthn_credential.public_key = str(
+            webauthn_credential.public_key, "utf-8")
+    user = User(
+        ukey=ukey,
+        username=username,
+        display_name=display_name,
+        pub_key=webauthn_credential.public_key,
+        credential_id=webauthn_credential.credential_id,
+        sign_count=webauthn_credential.sign_count,
+        rp_id=RP_ID,
+        icon_url='https://example.com')
+    db.session.add(user)
+    db.session.commit()
+    flash(f'Successfully registered as {username}.')
 
     return jsonify({'success': 'User successfully registered.'})
 
@@ -223,7 +216,7 @@ def verify_assertion():
     try:
         sign_count = webauthn_assertion_response.verify()
     except Exception as e:
-        return jsonify({'fail': 'Assertion failed. Error: {}'.format(e)})
+        return jsonify({'fail': f'Assertion failed. Error: {e}'})
 
     # Update counter.
     user.sign_count = sign_count
@@ -232,10 +225,7 @@ def verify_assertion():
 
     login_user(user)
 
-    return jsonify({
-        'success':
-        'Successfully authenticated as {}'.format(user.username)
-    })
+    return jsonify({'success': f'Successfully authenticated as {user.username}'})
 
 
 @app.route('/logout')

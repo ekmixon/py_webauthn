@@ -16,10 +16,7 @@ def validate_username(username):
     if len(username) > USERNAME_MAX_LENGTH:
         return False
 
-    if not username.isalnum():
-        return False
-
-    return True
+    return bool(username.isalnum())
 
 
 def validate_display_name(display_name):
@@ -29,10 +26,7 @@ def validate_display_name(display_name):
     if len(display_name) > DISPLAY_NAME_MAX_LENGTH:
         return False
 
-    if not display_name.replace(' ', '').isalnum():
-        return False
-
-    return True
+    return bool(display_name.replace(' ', '').isalnum())
 
 
 def generate_challenge(challenge_len=CHALLENGE_DEFAULT_BYTE_LEN):

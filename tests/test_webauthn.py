@@ -7,7 +7,7 @@ import webauthn
 from webauthn import const
 
 HERE = os.path.abspath(os.path.dirname(__file__))
-TRUST_ANCHOR_DIR = "{}/../webauthn/trusted_attestation_roots".format(HERE)
+TRUST_ANCHOR_DIR = f"{HERE}/../webauthn/trusted_attestation_roots"
 
 
 class WebAuthnES256Test(unittest.TestCase):
@@ -55,15 +55,13 @@ class WebAuthnES256Test(unittest.TestCase):
             credential.rp_id
         )
 
-        webauthn_assertion_response = webauthn.WebAuthnAssertionResponse(
+        return webauthn.WebAuthnAssertionResponse(
             webauthn_user,
             copy(self.ASSERTION_RESPONSE_TMPL),
             self.ASSERTION_CHALLENGE,
             self.ORIGIN,
             uv_required=False,
         )
-
-        return webauthn_assertion_response
 
     def test_create_options(self):
         registration_dict = self.options.registration_dict

@@ -175,7 +175,7 @@ class WebAuthnAssertionOptions(object):
     def assertion_dict(self):
         if not isinstance(self.webauthn_users, list) or len(self.webauthn_users) < 1:
             raise AuthenticationRejectedException('Invalid user list.')
-        if len(set([u.rp_id for u in self.webauthn_users])) != 1:
+        if len({u.rp_id for u in self.webauthn_users}) != 1:
             raise AuthenticationRejectedException('Invalid (mutliple) RP IDs in user list.')
         for user in self.webauthn_users:
             if not isinstance(user, WebAuthnUser):
@@ -185,15 +185,16 @@ class WebAuthnAssertionOptions(object):
         if not self.challenge:
             raise AuthenticationRejectedException('Invalid challenge.')
 
-        acceptable_credentials = []
-        for user in self.webauthn_users:
-            acceptable_credentials.append({
+        acceptable_credentials = [
+            {
                 'type': 'public-key',
                 'id': user.credential_id,
                 'transports': ['usb', 'nfc', 'ble', 'internal'],
-            })
+            }
+            for user in self.webauthn_users
+        ]
 
-        assertion_dict = {
+        return {
             'challenge': self.challenge,
             'allowCredentials': acceptable_credentials,
             'rpId': self.webauthn_users[0].rp_id,
@@ -201,8 +202,6 @@ class WebAuthnAssertionOptions(object):
             'userVerification': self.userVerification,
             # 'extensions': {}
         }
-
-        return assertion_dict
 
     @property
     def json(self):
@@ -229,8 +228,7 @@ class WebAuthnUser(object):
         self.rp_id = rp_id
 
     def __str__(self):
-        return '{} ({}, {}, {})'.format(self.user_id, self.username,
-                                        self.display_name, self.sign_count)
+        return f'{self.user_id} ({self.username}, {self.display_name}, {self.sign_count})'
 
 
 class WebAuthnCredential(object):
@@ -242,8 +240,7 @@ class WebAuthnCredential(object):
         self.sign_count = sign_count
 
     def __str__(self):
-        return '{} ({}, {}, {})'.format(self.credential_id, self.rp_id,
-                                        self.origin, self.sign_count)
+        return f'{self.credential_id} ({self.rp_id}, {self.origin}, {self.sign_count})'
 
 
 class WebAuthnRegistrationResponse(object):
@@ -397,10 +394,11 @@ class WebAuthnRegistrationResponse(object):
             return (attestation_type, trust_path, credential_pub_key, cred_id)
         elif fmt == AT_FMT_PACKED:
             attestation_syntaxes = {
-                AT_BASIC: set(['alg', 'x5c', 'sig']),
-                AT_ECDAA: set(['alg', 'sig', 'ecdaaKeyId']),
-                AT_SELF_ATTESTATION: set(['alg', 'sig'])
+                AT_BASIC: {'alg', 'x5c', 'sig'},
+                AT_ECDAA: {'alg', 'sig', 'ecdaaKeyId'},
+                AT_SELF_ATTESTATION: {'alg', 'sig'},
             }
+
 
             # Step 1.
             #
@@ -693,22 +691,9 @@ class WebAuthnRegistrationResponse(object):
                 raise RegistrationRejectedException(
                     'Malformed request received.')
 
-            # Step 12.
-            #
-            # Verify that the values of the client extension outputs in
-            # clientExtensionResults and the authenticator extension outputs
-            # in the extensions in authData are as expected, considering the
-            # client extension input values that were given as the extensions
-            # option in the create() call. In particular, any extension
-            # identifier values in the clientExtensionResults and the extensions
-            # in authData MUST be also be present as extension identifier values
-            # in the extensions member of options, i.e., no extensions are
-            # present that were not requested. In the general case, the meaning
-            # of "are as expected" is specific to the Relying Party and which
-            # extensions are in use.
-            registration_client_extensions = self.registration_response.get(
-                'registrationClientExtensions')
-            if registration_client_extensions:
+            if registration_client_extensions := self.registration_response.get(
+                'registrationClientExtensions'
+            ):
                 rce = json.loads(registration_client_extensions)
                 if not _verify_client_extensions(rce, self.expected_registration_client_extensions):
                     raise RegistrationRejectedException(
@@ -783,14 +768,13 @@ class WebAuthnRegistrationResponse(object):
                 raise NotImplementedError(
                     'ECDAA attestation type is not currently supported.')
             elif attestation_type == AT_BASIC:
-                if self.trusted_attestation_cert_required:
-                    if not _is_trusted_attestation_cert(
-                            trust_path, trust_anchors):
-                        raise RegistrationRejectedException(
-                            'Untrusted attestation certificate.')
-            elif attestation_type == AT_NONE:
-                pass
-            else:
+                if (
+                    self.trusted_attestation_cert_required
+                    and not _is_trusted_attestation_cert(trust_path, trust_anchors)
+                ):
+                    raise RegistrationRejectedException(
+                        'Untrusted attestation certificate.')
+            elif attestation_type != AT_NONE:
                 raise RegistrationRejectedException(
                     'Unknown attestation type.')
 
@@ -833,15 +817,17 @@ class WebAuthnRegistrationResponse(object):
             sc = auth_data[33:37]
             sign_count = struct.unpack('!I', sc)[0]
 
-            credential = WebAuthnCredential(
-                self.rp_id, self.origin, _webauthn_b64_encode(cred_id),
-                _webauthn_b64_encode(credential_public_key), sign_count)
+            return WebAuthnCredential(
+                self.rp_id,
+                self.origin,
+                _webauthn_b64_encode(cred_id),
+                _webauthn_b64_encode(credential_public_key),
+                sign_count,
+            )
 
-            return credential
 
         except Exception as e:
-            raise RegistrationRejectedException(
-                'Registration rejected. Error: {}.'.format(e))
+            raise RegistrationRejectedException(f'Registration rejected. Error: {e}.')
 
 
 class WebAuthnAssertionResponse(object):
@@ -872,10 +858,9 @@ class WebAuthnAssertionResponse(object):
             # ceremony was initiated, verify that credential.id identifies one
             # of the public key credentials that were listed in allowCredentials.
             cid = self.assertion_response.get('id')
-            if self.allow_credentials:
-                if cid not in self.allow_credentials:
-                    raise AuthenticationRejectedException(
-                        'Invalid credential.')
+            if self.allow_credentials and cid not in self.allow_credentials:
+                raise AuthenticationRejectedException(
+                    'Invalid credential.')
 
             # Step 2.
             #
@@ -885,9 +870,8 @@ class WebAuthnAssertionResponse(object):
             if not self.webauthn_user.username:
                 raise WebAuthnUserDataMissing("username missing")
 
-            user_handle = self.assertion_response.get('userHandle')
-            if user_handle:
-                if not user_handle == self.webauthn_user.username:
+            if user_handle := self.assertion_response.get('userHandle'):
+                if user_handle != self.webauthn_user.username:
                     raise AuthenticationRejectedException(
                         'Invalid credential.')
 
@@ -923,11 +907,7 @@ class WebAuthnAssertionResponse(object):
             #
             # Let JSONtext be the result of running UTF-8 decode on the
             # value of cData.
-            if sys.version_info < (3, 0):  # if python2
-                json_text = c_data.decode('utf-8')
-            else:
-                json_text = c_data
-
+            json_text = c_data.decode('utf-8') if sys.version_info < (3, 0) else c_data
             # Step 6.
             #
             # Let C, the client data claimed as used for the signature,
@@ -1009,22 +989,9 @@ class WebAuthnAssertionResponse(object):
                 raise RegistrationRejectedException(
                     'Malformed request received.')
 
-            # Step 14.
-            #
-            # Verify that the values of the client extension outputs in
-            # clientExtensionResults and the authenticator extension outputs
-            # in the extensions in authData are as expected, considering the
-            # client extension input values that were given as the extensions
-            # option in the get() call. In particular, any extension identifier
-            # values in the clientExtensionResults and the extensions in
-            # authData MUST be also be present as extension identifier values
-            # in the extensions member of options, i.e., no extensions are
-            # present that were not requested. In the general case, the meaning
-            # of "are as expected" is specific to the Relying Party and which
-            # extensions are in use.
-            assertion_client_extensions = self.assertion_response.get(
-                'assertionClientExtensions')
-            if assertion_client_extensions:
+            if assertion_client_extensions := self.assertion_response.get(
+                'assertionClientExtensions'
+            ):
                 ace = json.loads(assertion_client_extensions)
                 if not _verify_client_extensions(ace, self.expected_assertion_client_extensions):
                     raise AuthenticationRejectedException(
@@ -1079,10 +1046,10 @@ class WebAuthnAssertionResponse(object):
             #             or not, is Relying Party-specific.
             sc = decoded_a_data[33:37]
             sign_count = struct.unpack('!I', sc)[0]
-            
+
             if sign_count == 0 and self.webauthn_user.sign_count == 0:
                 return 0
-            
+
             if not sign_count:
                 raise AuthenticationRejectedException('Unable to parse sign_count.')
 
@@ -1103,8 +1070,7 @@ class WebAuthnAssertionResponse(object):
             return sign_count
 
         except Exception as e:
-            raise AuthenticationRejectedException(
-                'Authentication rejected. Error: {}.'.format(e))
+            raise AuthenticationRejectedException(f'Authentication rejected. Error: {e}.')
 
 
 def _encode_public_key(public_key):
@@ -1178,9 +1144,8 @@ def _webauthn_b64_decode(encoded):
     if sys.version_info < (3, 0):  # if python2
         # Ensure that this is encoded as ascii, not unicode.
         encoded = encoded.encode('ascii')
-    else:
-        if isinstance(encoded, bytes):
-            encoded = str(encoded, 'utf-8')
+    elif isinstance(encoded, bytes):
+        encoded = str(encoded, 'utf-8')
     # Add '=' until length is a multiple of 4 bytes, then decode.
     padding_len = (-len(encoded) % 4)
     encoded += '=' * padding_len
@@ -1239,16 +1204,13 @@ def _is_trusted_attestation_cert(trust_path, trust_anchors):
         store_ctx.verify_certificate()
         return True
     except Exception as e:
-        print('Unable to verify certificate: {}.'.format(e), file=sys.stderr)
+        print(f'Unable to verify certificate: {e}.', file=sys.stderr)
 
     return False
 
 
 def _verify_type(received_type, expected_type):
-    if received_type == expected_type:
-        return True
-
-    return False
+    return received_type == expected_type
 
 
 def _verify_challenge(received_challenge, sent_challenge):
@@ -1258,14 +1220,16 @@ def _verify_challenge(received_challenge, sent_challenge):
         return False
     if not received_challenge:
         return False
-    if not sent_challenge:
-        return False
-    if not constant_time.bytes_eq(
-            bytes(sent_challenge, encoding='utf-8'),
-            bytes(received_challenge, encoding='utf-8')):
-        return False
-
-    return True
+    return (
+        bool(
+            constant_time.bytes_eq(
+                bytes(sent_challenge, encoding='utf-8'),
+                bytes(received_challenge, encoding='utf-8'),
+            )
+        )
+        if sent_challenge
+        else False
+    )
 
 
 def _verify_origin(client_data, origin):
@@ -1274,12 +1238,7 @@ def _verify_origin(client_data, origin):
 
     client_data_origin = client_data.get('origin')
 
-    if not client_data_origin:
-        return False
-    if client_data_origin != origin:
-        return False
-
-    return True
+    return client_data_origin == origin if client_data_origin else False
 
 
 def _verify_token_binding_id(client_data):
@@ -1301,16 +1260,13 @@ def _verify_token_binding_id(client_data):
     # TODO: Add support for verifying token binding ID.
     token_binding_status = client_data['tokenBinding']['status']
     token_binding_id = client_data['tokenBinding'].get('id', '')
-    if token_binding_status in ('supported', 'not-supported'):
-        return True
-    return False
+    return token_binding_status in ('supported', 'not-supported')
 
 
 def _verify_client_extensions(client_extensions, expected_client_extensions):
-    if set(expected_client_extensions.keys()).issuperset(
-            client_extensions.keys()):
-        return True
-    return False
+    return set(expected_client_extensions.keys()).issuperset(
+        client_extensions.keys()
+    )
 
 
 def _verify_authenticator_extensions(client_data, expected_authenticator_extensions):
@@ -1332,33 +1288,27 @@ def _verify_rp_id_hash(auth_data_rp_id_hash, rp_id):
 def _verify_attestation_statement_format(fmt):
     # TODO: Handle other attestation statement formats.
     '''Verify the attestation statement format.'''
-    if not isinstance(fmt, six.string_types):
-        return False
-
-    return fmt in SUPPORTED_ATTESTATION_FORMATS
+    return (
+        fmt in SUPPORTED_ATTESTATION_FORMATS
+        if isinstance(fmt, six.string_types)
+        else False
+    )
 
 
 def _get_auth_data_rp_id_hash(auth_data):
-    if not isinstance(auth_data, six.binary_type):
-        return False
-
-    auth_data_rp_id_hash = auth_data[:32]
-
-    return auth_data_rp_id_hash
+    return auth_data[:32] if isinstance(auth_data, six.binary_type) else False
 
 
 def _get_client_data_hash(decoded_client_data):
-    if not isinstance(decoded_client_data, six.binary_type):
-        return ''
-
-    return hashlib.sha256(decoded_client_data).digest()
+    return (
+        hashlib.sha256(decoded_client_data).digest()
+        if isinstance(decoded_client_data, six.binary_type)
+        else ''
+    )
 
 
 def _validate_credential_id(credential_id):
-    if not isinstance(credential_id, six.string_types):
-        return False
-
-    return True
+    return isinstance(credential_id, six.string_types)
 
 
 def _verify_signature(public_key, alg, data, signature):
